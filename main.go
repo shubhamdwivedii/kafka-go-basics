@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"math"
+	"math/rand"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/segmentio/kafka-go"
@@ -34,7 +36,7 @@ func produce(ctx context.Context) {
 		err := w.WriteMessages(ctx, kafka.Message{
 			Key: []byte(strconv.Itoa(i)),
 			// create an arbitrary message payload for the value
-			Value: []byte("{ message: \"" + strconv.Itoa(i) + "\""),
+			Value: []byte("{ \"message\": \"" + strconv.Itoa(i) + "\"}"),
 		})
 		if err != nil {
 			panic("could not write message " + err.Error())
@@ -44,7 +46,9 @@ func produce(ctx context.Context) {
 		fmt.Println("writes:", i)
 		i++
 		// sleep for a second
-		time.Sleep(time.Second)
+		if i > 5 {
+			time.Sleep(time.Second)
+		}
 	}
 }
 
@@ -86,6 +90,7 @@ func (c *Consumer) Init(config kafka.ReaderConfig) {
 }
 
 func (c *Consumer) Consume() {
+	fmt.Println("Consumer.....")
 	for {
 		m, err := c.Reader.ReadMessage(context.Background())
 		if err != nil {
@@ -99,17 +104,27 @@ func (c *Consumer) Consume() {
 			continue
 		}
 
-		retries := 3
-		for retries > 0 {
+		rand.Seed(time.Now().UnixNano())
+		maximum_backoff := float64(1000 * 16) // 16s
+		retries := 0
+		for retries < 5 {
+			min_duration := float64(600)
+			delay := math.Min((math.Pow(2, float64(retries)) * min_duration), maximum_backoff)
+			fmt.Println("DELAY>>>", delay, time.Duration(delay)*time.Millisecond)
+			time.Sleep(time.Millisecond * time.Duration(delay)) // 0.6s > 1.2s > 2.4s > 4.8s > 9.6s
 			err = c.ProcessEvent(event)
-			if err != nil && strings.Contains(err.Error(), "i/o timeout") {
+			if err != nil {
 				// i/o timeout error >> retry
 				log.Println(err, "Processing of event failed")
 				if retries >= 1 {
 					log.Println("retrying...")
 				}
-				retries--
+				if retries == 4 {
+					panic("Retried 5 times.")
+				}
+				retries++
 			} else {
+
 				// successfull or other error >> continue with next message
 				log.Println("continuing...")
 				break
@@ -134,6 +149,10 @@ func main() {
 			GroupID: "my-group",
 		}),
 		ProcessEvent: func(event map[string]interface{}) error {
+			log.Println("Processing Event", event["message"])
+			if event["message"] == "3" {
+				return errors.New("invalid event 3 i/o timeout")
+			}
 			fmt.Println("Event::::", event)
 			return nil
 		},
