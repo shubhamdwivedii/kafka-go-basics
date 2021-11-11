@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"math/rand"
 	"strconv"
 	"time"
 
@@ -103,15 +102,11 @@ func (c *Consumer) Consume() {
 			log.Println(err, "Error while unmarshalling event")
 			continue
 		}
-
-		rand.Seed(time.Now().UnixNano())
-		maximum_backoff := float64(1000 * 16) // 16s
 		retries := 0
 		for retries < 5 {
-			min_duration := float64(600)
-			delay := math.Min((math.Pow(2, float64(retries)) * min_duration), maximum_backoff)
-			fmt.Println("DELAY>>>", delay, time.Duration(delay)*time.Millisecond)
-			time.Sleep(time.Millisecond * time.Duration(delay)) // 0.6s > 1.2s > 2.4s > 4.8s > 9.6s
+			backoff := exponentialBackoff(retries)
+			fmt.Println("DELAY>>>", backoff)
+			time.Sleep(backoff) // 0.6s > 1.2s > 2.4s > 4.8s > 9.6s
 			err = c.ProcessEvent(event)
 			if err != nil {
 				// i/o timeout error >> retry
@@ -131,6 +126,14 @@ func (c *Consumer) Consume() {
 			}
 		}
 	}
+}
+
+// ExponentialBackoff returns exponentially increasing backoffs by a power of 2.
+func exponentialBackoff(i int) time.Duration {
+	max_backoff := float64(1000 * 16)
+	min_duration := float64(600)
+	expo_const := 1 << i
+	return time.Millisecond * time.Duration(math.Min(float64(expo_const)*min_duration, max_backoff))
 }
 
 func convertToMap(bytes []byte) (map[string]interface{}, error) {
