@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"strconv"
 	"time"
 
@@ -103,37 +104,33 @@ func (c *Consumer) Consume() {
 			continue
 		}
 		retries := 0
-		for retries < 5 {
+		err = c.ProcessEvent(event)
+		for err != nil && retries < 5 {
+			log.Println("Processing of event failed")
+			log.Println("retrying")
 			backoff := exponentialBackoff(retries)
-			fmt.Println("DELAY>>>", backoff)
-			time.Sleep(backoff) // 0.6s > 1.2s > 2.4s > 4.8s > 9.6s
+			jitter := jitterBackoff()
+			fmt.Println("Backoff+jitter", backoff, jitter, backoff+jitter)
+			time.Sleep(backoff + jitter)
 			err = c.ProcessEvent(event)
-			if err != nil {
-				// i/o timeout error >> retry
-				log.Println(err, "Processing of event failed")
-				if retries >= 1 {
-					log.Println("retrying...")
-				}
-				if retries == 4 {
-					panic("Retried 5 times.")
-				}
-				retries++
-			} else {
+			retries++
+		}
 
-				// successfull or other error >> continue with next message
-				log.Println("continuing...")
-				break
-			}
+		if err != nil {
+			panic("After 5 Retries: " + err.Error())
 		}
 	}
 }
 
-// ExponentialBackoff returns exponentially increasing backoffs by a power of 2.
 func exponentialBackoff(i int) time.Duration {
-	max_backoff := float64(1000 * 16)
-	min_duration := float64(600)
-	expo_const := 1 << i
-	return time.Millisecond * time.Duration(math.Min(float64(expo_const)*min_duration, max_backoff))
+	max_backoff := float64(12000) // 12s
+	min_duration := float64(200)  // 0.4s
+	return time.Millisecond * time.Duration(math.Min(float64(i<<i)*min_duration, max_backoff))
+}
+func jitterBackoff() time.Duration {
+	max_jitter := 800 // 0.8s
+	rand.Seed(time.Now().UnixNano())
+	return time.Duration(rand.Int63n(int64(max_jitter))) * time.Millisecond
 }
 
 func convertToMap(bytes []byte) (map[string]interface{}, error) {
