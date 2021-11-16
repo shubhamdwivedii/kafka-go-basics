@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"math/rand"
 	"strconv"
 	"time"
@@ -17,6 +16,10 @@ import (
 const (
 	topic          = "message-log"
 	broker1Address = "localhost:9092"
+	maxBackoff     = time.Second * 12
+	minOffset      = time.Millisecond * 400
+	maxJitter      = time.Millisecond * 800
+	maxRetryCount  = 5
 )
 
 // produce writes a message into the Kafka cluster every second, forever:
@@ -108,10 +111,10 @@ func (c *Consumer) Consume() {
 		for err != nil && retries < 5 {
 			log.Println("Processing of event failed")
 			log.Println("retrying")
-			backoff := exponentialBackoff(retries)
-			jitter := jitterBackoff()
-			fmt.Println("Backoff+jitter", backoff, jitter, backoff+jitter)
-			time.Sleep(backoff + jitter)
+			backoff := exponentialBackoffWithJitter(retries)
+			// jitter := jitterBackoff()
+			fmt.Println("Backoff+jitter", backoff)
+			time.Sleep(backoff)
 			err = c.ProcessEvent(event)
 			retries++
 		}
@@ -122,15 +125,15 @@ func (c *Consumer) Consume() {
 	}
 }
 
-func exponentialBackoff(i int) time.Duration {
-	max_backoff := float64(12000) // 12s
-	min_duration := float64(200)  // 0.4s
-	return time.Millisecond * time.Duration(math.Min(float64(i<<i)*min_duration, max_backoff))
-}
-func jitterBackoff() time.Duration {
-	max_jitter := 800 // 0.8s
+func exponentialBackoffWithJitter(i int) time.Duration {
 	rand.Seed(time.Now().UnixNano())
-	return time.Duration(rand.Int63n(int64(max_jitter))) * time.Millisecond
+	backoff := minOffset * (1 << i)
+	jitter := time.Duration(rand.Int63n(int64(maxJitter/time.Millisecond))) * time.Millisecond
+	fmt.Println(1<<i, "1<<i", minOffset, backoff, jitter)
+	if backoff < maxBackoff {
+		return backoff + jitter
+	}
+	return maxBackoff + jitter
 }
 
 func convertToMap(bytes []byte) (map[string]interface{}, error) {
